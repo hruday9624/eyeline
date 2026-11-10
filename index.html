@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Teleprompter</title>
+<style>
+  :root {
+    --bg: #0b0c0e;
+    --panel: #15171b;
+    --line: #272a31;
+    --text: #f2efe9;
+    --muted: #8b8f98;
+    --accent: #ffcf5c;
+    --font: 56px;
+    --width: 44vw;
+    --marker: 33%;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
+    font-family: Inter, "Segoe UI", system-ui, sans-serif; }
+  [hidden] { display: none !important; }
+  button, select, input, textarea { font: inherit; color: inherit; }
+  button { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 14px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.primary { background: var(--accent); color: #1a1405; border-color: var(--accent); font-weight: 600; }
+
+  /* Editor */
+  #editor { max-width: 1100px; margin: 0 auto; padding: 24px 16px 40px; display: grid; gap: 16px; }
+  #editor h1 { font-size: 20px; margin: 0; }
+  #editor .sub { color: var(--muted); font-size: 14px; margin: 4px 0 0; }
+  .grid { display: grid; grid-template-columns: 1fr 300px; gap: 16px; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+  textarea#script { width: 100%; min-height: 62vh; resize: vertical; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; padding: 14px; line-height: 1.55; font-size: 16px; }
+  .side { display: grid; gap: 14px; align-content: start; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .side label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
+  .side select, .side input[type=range] { width: 100%; }
+  .side select { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .check { display: flex !important; align-items: center; gap: 8px; }
+  .stat { font-size: 13px; color: var(--muted); }
+  details { font-size: 13px; color: var(--muted); }
+  details kbd, .keys kbd { background: var(--bg); border: 1px solid var(--line); border-radius: 4px;
+    padding: 1px 6px; color: var(--text); font-size: 12px; }
+
+  /* Stage */
+  #stage { position: fixed; inset: 0; background: var(--bg); overflow: hidden; }
+  #stage.idle { cursor: none; }
+  #viewport { position: absolute; inset: 0; display: flex; justify-content: center; }
+  #viewport.mirror { transform: scaleX(-1); }
+  #column { position: relative; width: var(--width); height: 100%; overflow: hidden;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.30) 10%, #000 28%, #000 64%, rgba(0,0,0,.40) 90%, transparent 100%);
+            mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.30) 10%, #000 28%, #000 64%, rgba(0,0,0,.40) 90%, transparent 100%); }
+  #content { position: absolute; left: 0; right: 0; top: 0; will-change: transform; padding-left: 30px; padding-right: 30px;
+    font-size: var(--font); line-height: 1.4; font-weight: 600; letter-spacing: -.005em; text-align: left; }
+  #content p { margin: 0 0 .45em; overflow-wrap: anywhere; }
+  #content p.blank { height: .7em; margin: 0; }
+  #content.bullets { transition: transform .35s cubic-bezier(.2,.7,.2,1); }
+  #content .bullet { margin: 0 0 .9em; opacity: .28; transition: opacity .25s; overflow-wrap: anywhere; }
+  #content .bullet.on { opacity: 1; }
+  #marker { position: absolute; left: 0; right: 0; top: var(--marker); height: 0; pointer-events: none; z-index: 2; }
+  #marker::before, #marker::after { content: ""; position: absolute; top: calc(var(--msize, 18px) / -2);
+    width: var(--msize, 18px); height: var(--msize, 18px); background: var(--accent); }
+  #marker::before { left: 4px; clip-path: polygon(0 0, 100% 50%, 0 100%); }
+  #marker::after { right: 4px; clip-path: polygon(100% 0, 0 50%, 100% 100%); }
+  #progress { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--line); z-index: 3; }
+  #progress i { display: block; width: 100%; background: var(--accent); height: 0; }
+
+  #bar { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 5;
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center;
+    background: rgba(21,23,27,.94); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px;
+    transition: opacity .25s; max-width: 96vw; }
+  #stage.idle #bar { opacity: 0; pointer-events: none; }
+  #bar .info { font-size: 13px; color: var(--muted); min-width: 150px; text-align: center; }
+  #count { position: absolute; inset: 0; display: grid; place-items: center; z-index: 6;
+    font-size: 22vh; font-weight: 700; color: var(--accent); pointer-events: none; }
+  #help { position: absolute; top: 14px; right: 14px; z-index: 5; background: rgba(21,23,27,.94);
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 13px; color: var(--muted); line-height: 1.7; }
+  #help kbd { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; color: var(--text); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<main id="editor">
+  <div>
+    <h1>Local Teleprompter</h1>
+    <p class="sub">Runs in your browser. Scripts stay on this computer. No account, no ads.</p>
+  </div>
+  <div class="grid">
+    <textarea id="script" aria-label="Script" spellcheck="true" placeholder="Paste your script here."></textarea>
+    <div class="side">
+      <label>Mode
+        <select id="mode">
+          <option value="script">Word for word (scrolls)</option>
+          <option value="bullets">Bullets (one line at a time)</option>
+        </select>
+      </label>
+      <label>Text size: <span id="fontVal"></span>
+        <input id="font" type="range" min="28" max="120" step="2"></label>
+      <label>Column width: <span id="widthVal"></span>
+        <input id="width" type="range" min="25" max="90" step="1"></label>
+      <label>Speed: <span id="speedVal"></span>
+        <input id="speed" type="range" min="1" max="30" step="1"></label>
+      <label class="check"><input id="mirror" type="checkbox"> Mirror text</label>
+      <label class="check"><input id="countdown" type="checkbox"> 3 second countdown</label>
+      <div class="stat" id="stats"></div>
+      <div class="row">
+        <button id="start" class="primary">Start prompter</button>
+      </div>
+      <hr style="border:0;border-top:1px solid var(--line);width:100%;margin:0">
+      <label>Saved scripts
+        <select id="saved"></select></label>
+      <div class="row">
+        <button id="load">Load</button>
+        <button id="saveAs">Save as</button>
+        <button id="del">Delete</button>
+      </div>
+      <div class="row">
+        <button id="openFile">Open .txt</button>
+        <input id="file" type="file" accept=".txt,.md,text/plain" hidden>
+      </div>
+      <details>
+        <summary>Keys while prompting</summary>
+        <div class="keys" style="line-height:1.9;margin-top:6px">
+          <kbd>Space</kbd> start / pause (next bullet)<br>
+          <kbd>Up</kbd> <kbd>Down</kbd> speed<br>
+          <kbd>Left</kbd> <kbd>Right</kbd> bullets back / next<br>
+          <kbd>+</kbd> <kbd>-</kbd> text size<br>
+          <kbd>[</kbd> <kbd>]</kbd> column width<br>
+          <kbd>M</kbd> mirror, <kbd>R</kbd> restart<br>
+          <kbd>F</kbd> full screen, <kbd>?</kbd> help<br>
+          <kbd>Esc</kbd> back to editor<br>
+          Mouse: click to pause or advance, wheel to scroll.
+        </div>
+      </details>
+    </div>
+  </div>
+</main>
+
+<section id="stage" hidden aria-label="Prompter">
+  <div id="progress"><i></i></div>
+  <div id="viewport">
+    <div id="column">
+      <div id="marker"></div>
+      <div id="content"></div>
+    </div>
+  </div>
+  <div id="count" hidden></div>
+  <div id="help" hidden>
+    <kbd>Space</kbd> pause/next · <kbd>Up</kbd><kbd>Down</kbd> speed · <kbd>Left</kbd><kbd>Right</kbd> bullets<br>
+    <kbd>+</kbd><kbd>-</kbd> size · <kbd>[</kbd><kbd>]</kbd> width · <kbd>M</kbd> mirror · <kbd>R</kbd> restart · <kbd>F</kbd> full screen · <kbd>Esc</kbd> editor
+  </div>
+  <div id="bar">
+    <button id="bPlay" class="primary">Start</button>
+    <button id="bBack">Prev</button>
+    <button id="bFwd">Next</button>
+    <button id="bSlow">Slower</button>
+    <button id="bFast">Faster</button>
+    <button id="bSmall">A-</button>
+    <button id="bBig">A+</button>
+    <button id="bMirror">Mirror</button>
+    <button id="bRestart">Restart</button>
+    <button id="bEdit">Editor</button>
+    <span class="info" id="info"></span>
+  </div>
+</section>
+
+<script>
+"use strict";
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var KEY = "localTeleprompter.v1";
+
+  var DEFAULT_SCRIPT =
+    "Welcome. This is a sample script so you can see how the prompter moves.\n\n" +
+    "Replace this text with your own script, then press Start prompter.\n\n" +
+    "Press space to start. Use the up and down arrows to change the speed. " +
+    "Keep your eyes on the line marked by the yellow arrows, just under your webcam.";
+
+  var state = { mode: "script", font: 56, width: 44, speed: 10, mirror: false, countdown: true, draft: DEFAULT_SCRIPT, saved: {} };
+
+  function store(read, value) {
+    try {
+      if (read) { var r = localStorage.getItem(KEY); return r ? JSON.parse(r) : null; }
+      localStorage.setItem(KEY, JSON.stringify(value));
+    } catch (e) { return null; }
+  }
+  function persist() { store(false, state); }
+  (function init() {
+    var s = store(true);
+    if (s) for (var k in state) if (s[k] !== undefined) state[k] = s[k];
+  })();
+
+  // ---------- editor ----------
+  var el = {
+    script: $("script"), mode: $("mode"), font: $("font"), width: $("width"), speed: $("speed"),
+    mirror: $("mirror"), countdown: $("countdown"), stats: $("stats"), saved: $("saved")
+  };
+
+  function words(t) { var m = t.trim().match(/\S+/g); return m ? m.length : 0; }
+
+  function syncEditor() {
+    el.script.value = state.draft;
+    el.mode.value = state.mode;
+    el.font.value = state.font; $("fontVal").textContent = state.font + " px";
+    el.width.value = state.width; $("widthVal").textContent = state.width + "% of screen";
+    el.speed.value = state.speed; $("speedVal").textContent = state.speed;
+    el.mirror.checked = state.mirror;
+    el.countdown.checked = state.countdown;
+    updateStats();
+    refreshSaved();
+  }
+  function updateStats() {
+    var w = words(el.script.value);
+    el.stats.textContent = w + " words · about " + (w ? Math.max(1, Math.round(w / 150)) : 0) + " min at 150 wpm";
+  }
+  function refreshSaved() {
+    el.saved.innerHTML = "";
+    var names = Object.keys(state.saved);
+    if (!names.length) { var o = document.createElement("option"); o.textContent = "(none saved)"; o.value = ""; el.saved.appendChild(o); return; }
+    names.forEach(function (n) { var o = document.createElement("option"); o.value = n; o.textContent = n; el.saved.appendChild(o); });
+  }
+
+  el.script.addEventListener("input", function () { state.draft = el.script.value; updateStats(); persist(); });
+  el.mode.addEventListener("change", function () { state.mode = el.mode.value; persist(); });
+  el.font.addEventListener("input", function () { state.font = +el.font.value; syncEditor(); persist(); });
+  el.width.addEventListener("input", function () { state.width = +el.width.value; syncEditor(); persist(); });
+  el.speed.addEventListener("input", function () { state.speed = +el.speed.value; syncEditor(); persist(); });
+  el.mirror.addEventListener("change", function () { state.mirror = el.mirror.checked; persist(); });
+  el.countdown.addEventListener("change", function () { state.countdown = el.countdown.checked; persist(); });
+
+  $("saveAs").addEventListener("click", function () {
+    var name = window.prompt("Name for this script:");
+    if (!name) return;
+    state.saved[name.trim()] = el.script.value; persist(); refreshSaved(); el.saved.value = name.trim();
+  });
+  $("load").addEventListener("click", function () {
+    var n = el.saved.value; if (!n || state.saved[n] === undefined) return;
+    state.draft = state.saved[n]; syncEditor(); persist();
+  });
+  $("del").addEventListener("click", function () {
+    var n = el.saved.value; if (!n || state.saved[n] === undefined) return;
+    if (!window.confirm("Delete saved script \"" + n + "\"?")) return;
+    delete state.saved[n]; persist(); refreshSaved();
+  });
+  $("openFile").addEventListener("click", function () { $("file").click(); });
+  $("file").addEventListener("change", function (e) {
+    var f = e.target.files[0]; if (!f) return;
+    var r = new FileReader();
+    r.onload = function () { state.draft = String(r.result); syncEditor(); persist(); };
+    r.readAsText(f); e.target.value = "";
+  });
+
+  // ---------- stage ----------
+  var stage = $("stage"), viewport = $("viewport"), column = $("column"), content = $("content");
+  var playing = false, offset = 0, textH = 0, last = 0, elapsed = 0, countTimer = null, counting = false;
+  var bulletIdx = 0, bulletEls = [], wordCount = 1, idleTimer = null, wheelLock = 0;
+
+  function cssVars() {
+    document.documentElement.style.setProperty("--font", state.font + "px");
+    document.documentElement.style.setProperty("--width", state.width + "vw");
+    viewport.classList.toggle("mirror", state.mirror);
+  }
+
+  function build() {
+    content.innerHTML = ""; bulletEls = [];
+    var text = state.draft.replace(/\r/g, "");
+    content.className = state.mode === "bullets" ? "bullets" : "";
+    var lines = text.split("\n");
+    if (state.mode === "bullets") {
+      lines.forEach(function (l) {
+        l = l.replace(/^\s*([-*•]|\d+[.)])\s+/, "").trim();
+        if (!l) return;
+        var d = document.createElement("div"); d.className = "bullet"; d.textContent = l;
+        content.appendChild(d); bulletEls.push(d);
+      });
+      if (!bulletEls.length) { var d = document.createElement("div"); d.className = "bullet on"; d.textContent = "(empty script)"; content.appendChild(d); bulletEls.push(d); }
+    } else {
+      lines.forEach(function (l) {
+        var p = document.createElement("p");
+        if (!l.trim()) p.className = "blank"; else p.textContent = l;
+        content.appendChild(p);
+      });
+    }
+    wordCount = Math.max(1, words(text));
+    layout();
+  }
+
+  function layout() {
+    var vh = column.clientHeight;
+    var markerY = Math.round(vh * 0.33);
+    var half = Math.round(state.font * 1.4 / 2);       // first line sits centred on the marker
+    var padTop = Math.max(0, markerY - half);
+    var padBot = Math.max(0, vh - markerY - half);
+    content.style.paddingTop = padTop + "px";
+    content.style.paddingBottom = padBot + "px";
+    // Snap the arrows to whole device pixels so the left and right ones always match, at any display scaling.
+    var dpr = window.devicePixelRatio || 1;
+    var snap = function (v) { return Math.round(v * dpr) / dpr; };
+    $("marker").style.top = snap(markerY) + "px";
+    document.documentElement.style.setProperty("--msize", snap(18) + "px");
+    textH =Math.max(1, content.scrollHeight - padTop - padBot);
+    if (state.mode === "bullets") snapBullet(); else apply();
+  }
+
+  function apply() {
+    if (state.mode === "bullets") return;
+    offset = Math.max(0, Math.min(textH, offset));
+    content.style.transform = "translateY(" + (-offset).toFixed(2) + "px)";
+    $("progress").firstElementChild.style.height = (100 * offset / textH).toFixed(1) + "%";
+  }
+
+  function snapBullet() {
+    bulletIdx = Math.max(0, Math.min(bulletEls.length - 1, bulletIdx));
+    var padTop = parseFloat(content.style.paddingTop) || 0;
+    bulletEls.forEach(function (b, i) { b.classList.toggle("on", i === bulletIdx); });
+    var y = bulletEls[bulletIdx].offsetTop - padTop;
+    content.style.transform = "translateY(" + (-y) + "px)";
+    $("progress").firstElementChild.style.height = (bulletEls.length > 1 ? 100 * bulletIdx / (bulletEls.length - 1) : 100) + "%";
+    updateInfo();
+  }
+
+  function pxPerSec() { return state.speed * state.font * 0.08; }
+  function wpm() { return Math.round(pxPerSec() * 60 / (textH / wordCount)); }
+  function fmt(s) { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2); }
+
+  function updateInfo() {
+    var t;
+    if (state.mode === "bullets") {
+      t = "Bullet " + (bulletIdx + 1) + " / " + bulletEls.length + " · " + fmt(elapsed);
+    } else {
+      var left = (textH - offset) / pxPerSec();
+      t = "Speed " + state.speed + " (~" + wpm() + " wpm) · " + fmt(elapsed) + " · " + fmt(left) + " left";
+    }
+    $("info").textContent = t;
+    var b = $("bPlay");
+    if (state.mode === "bullets") { b.textContent = "Next"; }
+    else { b.textContent = playing ? "Pause" : (offset >= textH && textH > 1 ? "Done" : "Start"); }
+    $("bSlow").hidden = $("bFast").hidden = state.mode === "bullets";
+    $("bBack").hidden = $("bFwd").hidden = state.mode !== "bullets";
+    $("bPlay").hidden = state.mode === "bullets";
+  }
+
+  function loop(t) {
+    if (!stage.hidden) requestAnimationFrame(loop);
+    var dt = last ? Math.min(0.1, (t - last) / 1000) : 0;
+    last = t;
+    if (playing) {
+      elapsed += dt;
+      offset += pxPerSec() * dt;
+      if (offset >= textH) { offset = textH; playing = false; }
+      apply();
+    }
+    if (!stage.hidden && (playing || t % 10 < 1)) updateInfo();
+  }
+
+  function setPlaying(p) {
+    if (state.mode === "bullets") return;
+    if (p && offset >= textH) offset = 0;
+    playing = p; updateInfo();
+  }
+
+  function startWithCountdown() {
+    if (counting) { cancelCount(); return; }
+    if (state.mode === "bullets") return;
+    if (state.countdown && offset === 0 && !playing) {
+      var n = 3, c = $("count"); counting = true; c.hidden = false; c.textContent = n;
+      countTimer = setInterval(function () {
+        n--;
+        if (n <= 0) { cancelCount(); setPlaying(true); } else c.textContent = n;
+      }, 1000);
+    } else setPlaying(!playing);
+  }
+  function cancelCount() { clearInterval(countTimer); counting = false; $("count").hidden = true; }
+
+  function act() {            // main action (Space / click)
+    if (state.mode === "bullets") step(1); else startWithCountdown();
+  }
+  function step(d) { bulletIdx += d; snapBullet(); }
+  function restart() { cancelCount(); playing = false; offset = 0; bulletIdx = 0; elapsed = 0; if (state.mode === "bullets") snapBullet(); else { apply(); updateInfo(); } }
+  function setSpeed(d) { state.speed = Math.max(1, Math.min(30, state.speed + d)); persist(); updateInfo(); }
+  function setFont(d) {
+    var frac = textH ? offset / textH : 0;
+    state.font = Math.max(28, Math.min(120, state.font + d)); persist(); cssVars(); layout();
+    offset = frac * textH; apply(); updateInfo();
+  }
+  function setWidth(d) {
+    var frac = textH ? offset / textH : 0;
+    state.width = Math.max(25, Math.min(90, state.width + d)); persist(); cssVars(); layout();
+    offset = frac * textH; apply(); updateInfo();
+  }
+  function toggleMirror() { state.mirror = !state.mirror; persist(); cssVars(); }
+
+  function openStage() {
+    state.draft = el.script.value; persist();
+    $("editor").hidden = true; stage.hidden = false;
+    cssVars(); playing = false; offset = 0; bulletIdx = 0; elapsed = 0; last = 0;
+    build(); updateInfo(); wake();
+    requestAnimationFrame(loop);
+  }
+  function closeStage() {
+    cancelCount(); playing = false; stage.hidden = true; $("editor").hidden = false;
+    if (document.fullscreenElement) document.exitFullscreen();
+    syncEditor();
+  }
+  function toggleFull() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
+  }
+
+  function wake() {
+    stage.classList.remove("idle"); clearTimeout(idleTimer);
+    idleTimer = setTimeout(function () { stage.classList.add("idle"); }, 2500);
+  }
+
+  $("start").addEventListener("click", openStage);
+  $("bPlay").addEventListener("click", act);
+  $("bBack").addEventListener("click", function () { step(-1); });
+  $("bFwd").addEventListener("click", function () { step(1); });
+  $("bSlow").addEventListener("click", function () { setSpeed(-1); });
+  $("bFast").addEventListener("click", function () { setSpeed(1); });
+  $("bSmall").addEventListener("click", function () { setFont(-4); });
+  $("bBig").addEventListener("click", function () { setFont(4); });
+  $("bMirror").addEventListener("click", toggleMirror);
+  $("bRestart").addEventListener("click", restart);
+  $("bEdit").addEventListener("click", closeStage);
+
+  stage.addEventListener("mousemove", wake);
+  viewport.addEventListener("click", function () { act(); wake(); });
+  viewport.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    if (state.mode === "bullets") {
+      var now = Date.now(); if (now - wheelLock < 250) return; wheelLock = now;
+      step(e.deltaY > 0 ? 1 : -1);
+    } else { offset += e.deltaY; apply(); updateInfo(); }
+    wake();
+  }, { passive: false });
+
+  window.addEventListener("resize", function () { if (!stage.hidden) { var f = textH ? offset / textH : 0; layout(); offset = f * textH; apply(); } });
+
+  window.addEventListener("keydown", function (e) {
+    if (stage.hidden || e.ctrlKey || e.metaKey || e.altKey) return;
+    var k = e.key, used = true;
+    if (k === " ") act();
+    else if (k === "ArrowUp") { state.mode === "bullets" ? step(-1) : setSpeed(1); }
+    else if (k === "ArrowDown") { state.mode === "bullets" ? step(1) : setSpeed(-1); }
+    else if (k === "ArrowRight" || k === "PageDown") { if (state.mode === "bullets") step(1); else { offset += textH * 0.05; apply(); } }
+    else if (k === "ArrowLeft" || k === "PageUp") { if (state.mode === "bullets") step(-1); else { offset -= textH * 0.05; apply(); } }
+    else if (k === "+" || k === "=") setFont(4);
+    else if (k === "-" || k === "_") setFont(-4);
+    else if (k === "]") setWidth(2);
+    else if (k === "[") setWidth(-2);
+    else if (k === "m" || k === "M") toggleMirror();
+    else if (k === "r" || k === "R") restart();
+    else if (k === "f" || k === "F") toggleFull();
+    else if (k === "?" || k === "/") $("help").hidden = !$("help").hidden;
+    else if (k === "Escape") { if (document.fullscreenElement) document.exitFullscreen(); else closeStage(); }
+    else used = false;
+    if (used) { e.preventDefault(); wake(); updateInfo(); }
+  });
+
+  syncEditor();
+})();
+</script>
+</body>
+</html>
